@@ -4,6 +4,7 @@ import pymysql
 from bs4 import BeautifulSoup as BS
 import logging
 import time
+from pathlib import Path
 
 fmt = '%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s'
 datefmt = '%Y-%m-%d %H:%M:%S'
@@ -126,7 +127,7 @@ class ZhihuCrawler:
                     try:
                         self.add_entry(crawl_id, idx, item, detail)
                     except Exception as e:
-                        logger.exception(f"Exception when adding entry {e}")
+                        logger.exception(f"{e} when adding entry {idx}")
                 self.end_crawl(crawl_id)
             except Exception as e:
                 logger.exception(f"Crawl {crawl_id} encountered an exception {e}. This crawl stopped.")
@@ -174,7 +175,7 @@ COLLATE = utf8mb4_unicode_ci;
 """
         self.query(sql)
 
-    def begin_crawl(self, begin_time) -> (int, float):
+    def begin_crawl(self, begin_time):
         """
         Mark the beginning of a crawl
         :param begin_time:
@@ -265,9 +266,52 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
         # Hint: - Parse HTML, pay attention to the <section> tag.
         #       - Use keyword argument `class_` to specify the class of a tag in `find`
         #       - Hot Question List can be accessed in https://www.zhihu.com/hot
-
-        raise NotImplementedError
-
+        
+        url = "https://www.zhihu.com/billboard"
+        resp = requests.get(url,headers={
+            "User-Agent" : None,
+            "Cookie" : None
+        })
+        # test_path = Path.cwd() / "test_file.html"
+        # with open(test_path,"w") as f:
+        #     f.write(resp.text)
+        
+        soup = BS(resp.text,"lxml")
+        # print(soup)
+        
+        script_text = soup.find("script",id="js-initialData").get_text()
+        script = json.loads(script_text)
+        # print(json.dumps(script, indent=4, separators=(',', ': ')))
+        
+        items = script["initialState"]["topstory"]["hotList"]
+        # print(json.dumps(items, indent=4, separators=(',', ': ')))
+        
+        board = []
+        for item in items:
+            try:
+                qid = int(item["cardId"].strip("Q_"))
+                # print(qid)
+            except Exception as e:
+                logger.info("strange question with qid " + item["cardId"])
+                continue
+            content = item["target"]
+            title = content["titleArea"]["text"]
+            # print(title)
+            heat = content["metricsArea"]["text"]
+            # print(heat)
+            excerpt = content["excerptArea"]["text"]
+            # print(excerpt)
+            url = content["link"]["url"]
+            board.append({
+                "title": title, 
+                "heat": heat,
+                "excerpt": excerpt,
+                "url": url,
+                "qid": qid
+            })
+            
+        return board
+        
     def get_question(self, qid: int) -> dict:
         """
         TODO: Fetch question info by question ID
@@ -305,7 +349,41 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
         #       - Use `time.time()` to create the time stamp
         #       - Question can be accessed in https://www.zhihu.com/question/<Question ID>
 
-        raise NotImplementedError
+        url = "https://www.zhihu.com/question/" + str(qid)
+        resp = requests.get(url,headers={
+            "User-Agent" : None,
+            "Cookie" : None
+        })
+
+        soup = BS(resp.text, "lxml")
+        script_text = soup.find("script", id="js-initialData").get_text()
+
+        script_dict = json.loads(script_text)
+        # script_json = json.dumps(script_dict, indent=4, separators=(',', ': '))
+        # print(script_json)
+
+        question = script_dict["initialState"]["entities"]["questions"][str(qid)]
+        # question_json = json.dumps(question, indent=4, separators=(',', ': '))
+        # print(question_json)
+        created = question["created"]
+        followerCount = question["followerCount"]
+        visitCount = question["visitCount"]
+        answerCount = question["answerCount"]
+        title = question["title"]
+        raw = question["detail"]
+        hit_at = time.time()
+
+        question2return = {
+            "created": created,
+            "followerCount": followerCount,
+            "visitCount": visitCount,
+            "answerCount": answerCount,
+            "title": title,
+            "raw": raw,
+            "hit_at": hit_at
+        } 
+        return question2return
+        
 
 if __name__ == "__main__":
     z = ZhihuCrawler()
